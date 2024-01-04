@@ -311,22 +311,100 @@ from music21 import *
 
 Let’s define a function straight away for reading the MIDI files. It returns the array of notes and chords present in the musical file.
 
-View the code on [Gist](https://gist.github.com/aravindpai/5cbe41bc474b610569e0a0ae8b164b56).
+**music_1.py**
+```
+#defining function to read MIDI files
+def read_midi(file):
+    
+    print("Loading Music File:",file)
+    
+    notes=[]
+    notes_to_parse = None
+    
+    #parsing a midi file
+    midi = converter.parse(file)
+  
+    #grouping based on different instruments
+    s2 = instrument.partitionByInstrument(midi)
+
+    #Looping over all the instruments
+    for part in s2.parts:
+    
+        #select elements of only piano
+        if 'Piano' in str(part): 
+        
+            notes_to_parse = part.recurse() 
+      
+            #finding whether a particular element is note or a chord
+            for element in notes_to_parse:
+                
+                #note
+                if isinstance(element, note.Note):
+                    notes.append(str(element.pitch))
+                
+                #chord
+                elif isinstance(element, chord.Chord):
+                    notes.append('.'.join(str(n) for n in element.normalOrder))
+
+    return np.array(notes)
+```
 
 Now, we will load the MIDI files into our environment.
 
-View the code on [Gist](https://gist.github.com/aravindpai/e430eb4068a25dd680c99d837dbc28e6).
+**music_2.py**
+```
+#for listing down the file names
+import os
+
+#Array Processing
+import numpy as np
+
+#specify the path
+path='schubert/'
+
+#read all the filenames
+files=[i for i in os.listdir(path) if i.endswith(".mid")]
+
+#reading each midi file
+notes_array = np.array([read_midi(path+i) for i in files])
+```
 
 ### Understanding the data:
 
-Under this section, we will explore the dataset and understand it in detail.
-View the code on [Gist](https://gist.github.com/aravindpai/f01ae534b81fe9d051f819bfa7a5337f).
+**music_3.py**
+```
+#converting 2D array into 1D array
+notes_ = [element for note_ in notes_array for element in note_]
+
+#No. of unique notes
+unique_notes = list(set(notes_))
+print(len(unique_notes))
+```
 
 **Output**: 304
 
 As you can see here, no. of unique notes is 304. Now, let us see the distribution of the notes.
 
-View the code on [Gist](https://gist.github.com/aravindpai/64bed14020e108273c95dec625e90f20).
+**music_4.py**
+```
+#importing library
+from collections import Counter
+
+#computing frequency of each note
+freq = dict(Counter(notes_))
+
+#library for visualiation
+import matplotlib.pyplot as plt
+
+#consider only the frequencies
+no=[count for _,count in freq.items()]
+
+#set the figure size
+plt.figure(figsize=(5,5))
+
+#plot
+plt.hist(no)
+```
 
 **Output**:
 
@@ -343,13 +421,43 @@ print(len(frequent_notes))
 
 As you can see here, no. of frequently occurring notes is around 170.  Now, let us prepare new musical files which contain only the top frequent notes
 
-View the code on [Gist](https://gist.github.com/aravindpai/abc415c1e225fddc429d1d7b088a6f5c).
+**music_5.py**
+```
+new_music=[]
+
+for notes in notes_array:
+    temp=[]
+    for note_ in notes:
+        if note_ in frequent_notes:
+            temp.append(note_)            
+    new_music.append(temp)
+    
+new_music = np.array(new_music)
+```
 
 ### Preparing Data:
 
 Preparing the input and output sequences as mentioned in the article:
 
-View the code on [Gist](https://gist.github.com/aravindpai/0fc39052ca8a42cc044a3e5ce164526e).
+**music_6.py**
+```
+no_of_timesteps = 32
+x = []
+y = []
+
+for note_ in new_music:
+    for i in range(0, len(note_) - no_of_timesteps, 1):
+        
+        #preparing input and output sequences
+        input_ = note_[i:i + no_of_timesteps]
+        output = note_[i + no_of_timesteps]
+        
+        x.append(input_)
+        y.append(output)
+        
+x=np.array(x)
+y=np.array(y)
+```
 
 Now, we will assign a unique integer to every note:
 
@@ -361,7 +469,19 @@ x_note_to_int = dict((note_, number) for number, note_ in enumerate(unique_x))
 
 We will prepare the integer sequences for input data.
 
-View the code on [Gist](https://gist.github.com/aravindpai/159a149de2d47dc5a336fb8a22ff7605).
+**music_7.py**
+```
+#preparing input sequences
+x_seq=[]
+for i in x:
+    temp=[]
+    for j in i:
+        #assigning unique integer to every note
+        temp.append(x_note_to_int[j])
+    x_seq.append(temp)
+    
+x_seq = np.array(x_seq)
+```
 
 Similarly, prepare the integer sequences for output data as well.
 
@@ -382,11 +502,236 @@ x_tr, x_val, y_tr, y_val = train_test_split(x_seq,y_seq,test_size=0.2,random_sta
 
 I have defined 2 architectures here – WaveNet and LSTM. Please experiment with both the architectures to understand the importance of WaveNet architecture.
 
-View the code on [Gist](https://gist.github.com/aravindpai/850a378c8bb3b3f487911c355e716f0d).
+**build.py**
+```
+model = simple_wavenet()
+model.fit(X,np.array(y), epochs=300, batch_size=128,callbacks=[mc])
+```
+
+**callback.py**
+```
+import keras
+mc = keras.callbacks.ModelCheckpoint('model{epoch:03d}.h5', save_weights_only=False, period=50)
+```
+**create_midi.py**
+```
+def convert_to_midi(prediction_output):
+    offset = 0
+    output_notes = []
+
+    # create note and chord objects based on the values generated by the model
+    for pattern in prediction_output:
+        # pattern is a chord
+        if ('.' in pattern) or pattern.isdigit():
+            notes_in_chord = pattern.split('.')
+            notes = []
+            for current_note in notes_in_chord:
+                new_note = note.Note(int(current_note))
+                new_note.storedInstrument = instrument.Piano()
+                notes.append(new_note)
+            new_chord = chord.Chord(notes)
+            new_chord.offset = offset
+            output_notes.append(new_chord)
+        # pattern is a note
+        else:
+            new_note = note.Note(pattern)
+            new_note.offset = offset
+            new_note.storedInstrument = instrument.Piano()
+            output_notes.append(new_note)
+
+        # Specify duration between 2 notes
+        offset+  = 0.5
+       # offset += random.uniform(0.5,0.9)
+
+    midi_stream = stream.Stream(output_notes)
+    midi_stream.write('midi', fp='music.mid')
+```
+
+**generate.py**
+```
+#Select random chunk for the first iteration
+start = np.random.randint(0, len(X)-1)
+pattern = X[start]
+#load the best model
+model=load_model('model300.h5')
+#generate and save music
+music = generate_music(model,pitch,no_of_timesteps,pattern)
+convert_to_midi(music)
+```
+
+**generate_music.py**
+```
+#Select random chunk for the first iteration
+start = np.random.randint(0, len(X)-1)
+pattern = X[start]
+#load the best model
+model=load_model('model300.h5')
+#generate and save music
+music = generate_music(model,pitch,no_of_timesteps,pattern)
+convert_to_midi(music)
+```
+
+**import.py**
+```
+#dealing with midi files
+from music21 import * 
+
+#array processing
+import numpy as np     
+import os
+
+#random number generator
+import random         
+
+#keras for building deep learning model
+from keras.layers import * 
+from keras.models import *
+import keras.backend as K
+```
+**lstm.py**
+```
+def lstm():
+	model = Sequential()
+	model.add(LSTM(128,return_sequences=True))
+	model.add(LSTM(128))
+	model.add(Dense(256))
+	model.add(Activation('relu'))
+	model.add(Dense(n_vocab))
+	model.add(Activation('softmax'))
+	model.compile(loss='sparse_categorical_crossentropy', optimizer='adam')
+	return model
+```
+**prepare.py**
+```
+#length of a input sequence
+no_of_timesteps = 128      
+
+#no. of unique notes
+n_vocab = len(set(notes))  
+
+#all the unique notes
+pitch = sorted(set(item for item in notes))  
+
+#assign unique value to every note
+note_to_int = dict((note, number) for number, note in enumerate(pitch))  
+
+#preparing input and output sequences
+X = []
+y = []
+for notes in all_notes:
+  for i in range(0, len(notes) - no_of_timesteps, 1):
+    input_ = notes[i:i + no_of_timesteps]
+    output = notes[i + no_of_timesteps]
+    X.append([note_to_int[note] for note in input_])
+    y.append(note_to_int[output])
+```
+**read_data.py**
+```
+#read all the filenames
+files=[i for i in os.listdir() if i.endswith(".mid")]
+
+#reading each midi file
+all_notes=[]
+for i in files:
+  all_notes.append(read_midi(i))
+
+#notes and chords of all the midi files
+notes = [element for notes in all_notes for element in notes]
+```
+**read_midi.py**
+```
+def read_midi(file):
+  notes=[]
+  notes_to_parse = None
+
+  #parsing a midi file
+  midi = converter.parse(file)
+  #grouping based on different instruments
+  s2 = instrument.partitionByInstrument(midi)
+
+  #Looping over all the instruments
+  for part in s2.parts:
+    #select elements of only piano
+    if 'Piano' in str(part): 
+      notes_to_parse = part.recurse() 
+      #finding whether a particular element is note or a chord
+      for element in notes_to_parse:
+        if isinstance(element, note.Note):
+          notes.append(str(element.pitch))
+        elif isinstance(element, chord.Chord):
+          notes.append('.'.join(str(n) for n in element.normalOrder))
+      
+  return notes
+```
+**reshaping.py**
+```
+#reshaping
+X = np.reshape(X, (len(X), no_of_timesteps, 1))
+#normalizing the inputs
+X = X / float(n_vocab) 
+```
+**seed.py**
+```
+from numpy.random import seed
+seed(1)
+from tensorflow import set_random_seed
+set_random_seed(2)
+```
+**wavenet.py**
+```
+K.clear_session()
+def simple_wavenet():
+  no_of_kernels=64
+  num_of_blocks= int(np.sqrt(no_of_timesteps)) - 1   #no. of stacked conv1d layers
+
+  model = Sequential()
+  for i in range(num_of_blocks):
+    model.add(Conv1D(no_of_kernels,3,dilation_rate=(2**i),padding='causal',activation='relu'))
+  model.add(Conv1D(1, 1, activation='relu', padding='causal'))
+  model.add(Flatten())
+  model.add(Dense(128, activation='relu'))
+  model.add(Dense(n_vocab, activation='softmax'))
+  model.compile(loss='sparse_categorical_crossentropy', optimizer='adam')
+  return model
+```
 
 I have simplified the architecture of the WaveNet without adding residual and skip connections since the role of these layers is to improve the faster convergence (and WaveNet takes raw audio wave as input). But in our case, the input would be a set of nodes and chords since we are generating music:
 
-View the code on [Gist](https://gist.github.com/aravindpai/ba51f9ea6c6da29dd8b69db59df6bf10).
+**10_8.py**
+```
+from keras.layers import *
+from keras.models import *
+from keras.callbacks import *
+import keras.backend as K
+
+K.clear_session()
+model = Sequential()
+    
+#embedding layer
+model.add(Embedding(len(unique_x), 100, input_length=32,trainable=True)) 
+
+model.add(Conv1D(64,3, padding='causal',activation='relu'))
+model.add(Dropout(0.2))
+model.add(MaxPool1D(2))
+    
+model.add(Conv1D(128,3,activation='relu',dilation_rate=2,padding='causal'))
+model.add(Dropout(0.2))
+model.add(MaxPool1D(2))
+
+model.add(Conv1D(256,3,activation='relu',dilation_rate=4,padding='causal'))
+model.add(Dropout(0.2))
+model.add(MaxPool1D(2))
+          
+#model.add(Conv1D(256,5,activation='relu'))    
+model.add(GlobalMaxPool1D())
+    
+model.add(Dense(256, activation='relu'))
+model.add(Dense(len(unique_y), activation='softmax'))
+    
+model.compile(loss='sparse_categorical_crossentropy', optimizer='adam')
+
+model.summary()
+```
 
 Define the callback to save the best model during training:
 
@@ -410,7 +755,27 @@ model = load_model('best_model.h5')
 
 Its time to compose our own music now. We will follow the steps mentioned under the inference phase for the predictions.
 
-View the code on [Gist](https://gist.github.com/aravindpai/9f7fe5dad0d90eb1e8a5b8772815c6cf).
+**10_9.py**
+```
+import random
+ind = np.random.randint(0,len(x_val)-1)
+
+random_music = x_val[ind]
+
+predictions=[]
+for i in range(10):
+
+    random_music = random_music.reshape(1,no_of_timesteps)
+
+    prob  = model.predict(random_music)[0]
+    y_pred= np.argmax(prob,axis=0)
+    predictions.append(y_pred)
+
+    random_music = np.insert(random_music[0],len(random_music[0]),y_pred)
+    random_music = random_music[1:]
+    
+print(predictions)
+```
 
 Now, we will convert the integers back into the notes.
 
@@ -421,7 +786,44 @@ predicted_notes = [x_int_to_note[i] for i in predictions]
 
 The final step is to convert back the predictions into a MIDI file. Let’s define the function to accomplish the task.
 
-View the code on [Gist](https://gist.github.com/aravindpai/a493614f1cbc64989b538b01cd616271).
+**10_10.py**
+```
+def convert_to_midi(prediction_output):
+   
+    offset = 0
+    output_notes = []
+
+    # create note and chord objects based on the values generated by the model
+    for pattern in prediction_output:
+        
+        # pattern is a chord
+        if ('.' in pattern) or pattern.isdigit():
+            notes_in_chord = pattern.split('.')
+            notes = []
+            for current_note in notes_in_chord:
+                
+                cn=int(current_note)
+                new_note = note.Note(cn)
+                new_note.storedInstrument = instrument.Piano()
+                notes.append(new_note)
+                
+            new_chord = chord.Chord(notes)
+            new_chord.offset = offset
+            output_notes.append(new_chord)
+            
+        # pattern is a note
+        else:
+            
+            new_note = note.Note(pattern)
+            new_note.offset = offset
+            new_note.storedInstrument = instrument.Piano()
+            output_notes.append(new_note)
+
+        # increase offset each iteration so that notes do not stack
+        offset += 1
+    midi_stream = stream.Stream(output_notes)
+    midi_stream.write('midi', fp='music.mid')
+```
 
 Converting the predictions into a musical file:
 

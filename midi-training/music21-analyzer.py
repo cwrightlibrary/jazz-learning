@@ -3,7 +3,7 @@ import numpy as np
 import pickle
 from collections import Counter
 from music21 import converter, instrument, note, chord
-from os import listdir
+from os import listdir, name
 from os.path import dirname, join, realpath
 
 def readMidi(file):
@@ -27,11 +27,15 @@ path = join(dirname(realpath(__file__)), "mids")
 print(path)
 
 files = [i for i in listdir(path) if i.endswith(".mid")]
+if name == "nt":
+	midiPath = path + "\\"
+else:
+	midiPath = path + "/"
 
-notesArray = np.array([readMidi(path + "\\" + i) for i in files])
+notesArray = np.array([readMidi(midiPath + i) for i in files])
 
 with open(join(dirname(realpath(__file__)), "notes-music21"), "wb") as filepath:
-		pickle.dump(notesArray, filepath)
+	pickle.dump(notesArray, filepath)
 
 notesArrayFile = join(dirname(realpath(__file__)), "notes-music21")
 
